@@ -168,6 +168,8 @@ fn approval_by_non_owner_is_rejected() {
 
     let result = client.try_approve(&mallory, &mallory, &token_id, &1000);
     assert_eq!(result, Err(Ok(Error::InsufficientApproval.into())));
+}
+
 // ---------------------------------------------------------------------------
 // LF-012 – persistent TokenOwner entries survive a ledger advance
 // ---------------------------------------------------------------------------
@@ -296,4 +298,26 @@ fn upgrade_keeps_state_and_changes_version() {
             .unwrap()
     });
     assert_eq!(stored_owner, recipient);
+}
+
+#[test]
+fn tokens_of_owner_tracks_mints_and_transfers() {
+    let (env, client, _owner, minter) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    assert_eq!(client.tokens_of_owner(&alice).len(), 0);
+    let first = client.mint(&minter, &alice);
+    let second = client.mint(&minter, &alice);
+    assert_eq!(
+        client.tokens_of_owner(&alice),
+        soroban_sdk::vec![&env, first, second]
+    );
+
+    client.transfer(&alice, &bob, &first);
+
+    assert_eq!(
+        client.tokens_of_owner(&alice),
+        soroban_sdk::vec![&env, second]
+    );
+    assert_eq!(client.tokens_of_owner(&bob), soroban_sdk::vec![&env, first]);
 }

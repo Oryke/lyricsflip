@@ -17,6 +17,9 @@ ONCHAIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${ONCHAIN_DIR}/.." && pwd)"
 COMMITTED_DIR="${REPO_ROOT}/frontend/src/lib/stellar/generated"
 TMP_DIR="$(mktemp -d)"
+# The CLI names the npm package after the output folder, so it must match
+# the committed folder name.
+FRESH_DIR="${TMP_DIR}/$(basename "${COMMITTED_DIR}")"
 
 log() { echo "[check-bindings-fresh.sh] $*"; }
 
@@ -43,7 +46,7 @@ fi
 log "Generating fresh bindings for comparison…"
 stellar contract bindings typescript \
   --wasm "${WASM}" \
-  --output-dir "${TMP_DIR}" \
+  --output-dir "${FRESH_DIR}" \
   --overwrite
 
 # ---------------------------------------------------------------------------
@@ -56,7 +59,7 @@ if [[ ! -d "${COMMITTED_DIR}" ]]; then
   exit 1
 fi
 
-DIFF_OUTPUT="$(diff -rq "${COMMITTED_DIR}" "${TMP_DIR}" 2>&1 || true)"
+DIFF_OUTPUT="$(diff -rq "${COMMITTED_DIR}" "${FRESH_DIR}" 2>&1 || true)"
 
 if [[ -n "${DIFF_OUTPUT}" ]]; then
   echo ""

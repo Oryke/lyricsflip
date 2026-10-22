@@ -1,4 +1,5 @@
 import axios, { AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
+import { getAccessToken, refreshSession } from '@/lib/auth/session';
 
 // Define the base configuration for API
 const apiConfig = {
@@ -6,8 +7,12 @@ const apiConfig = {
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
+    // CSRF guard for cookie-authenticated endpoints (see backend refresh-cookie.ts).
+    'X-Requested-With': 'XMLHttpRequest',
   },
   timeout: 15000, // 15 seconds
+  // Sends the HttpOnly refresh-token cookie.
+  withCredentials: true,
 };
 
 // Create axios instance with the configuration
@@ -16,11 +21,10 @@ const apiClient = axios.create(apiConfig);
 // Request interceptor for adding auth token, etc.
 apiClient.interceptors.request.use(
   (config) => {
-    // You can add authorization token here if needed
-    // const token = localStorage.getItem('token');
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`;
-    // }
+    const token = getAccessToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => {
@@ -32,8 +36,21 @@ apiClient.interceptors.request.use(
 // Response interceptor for global error handling
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     const { response } = error;
+    const original = error.config as (AxiosRequestConfig & { _retried?: boolean }) | undefined;
+    // Access tokens are short-lived and memory-only: refresh once on 401.
+    if (
+      response?.status === 401 &&
+      original &&
+      !original._retried &&
+      !original.url?.startsWith('/auth/')
+    ) {
+      original._retried = true;
+      if (await refreshSession()) {
+        return apiClient(original);
+      }
+    }
     console.error('API response error:', {
       url: error.config?.url,
       status: response?.status,

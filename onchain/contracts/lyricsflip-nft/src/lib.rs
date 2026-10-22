@@ -5,7 +5,7 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
-    BytesN, Env, String,
+    BytesN, Env, String, Vec,
 };
 
 /// Bumped on every release that changes the contract's code; see `upgrade`.
@@ -135,6 +135,9 @@ enum DataKey {
     Balance(Address),
     Approval(u128),
     ApprovalForAll((Address, Address)),
+    /// Token ids held by an owner, so wallets can list their badges in one
+    /// call instead of scanning every id with `owner_of`.
+    OwnedTokens(Address),
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +155,7 @@ fn bump_instance(env: &Env) {
 }
 
 #[inline]
-fn bump_persistent<K: soroban_sdk::TryIntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K) {
+fn bump_persistent<K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K) {
     env.storage()
         .persistent()
         .extend_ttl(key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
@@ -215,6 +218,7 @@ impl LyricsFlipNFT {
             .persistent()
             .set(&DataKey::TokenOwner(token_id), &recipient);
         Self::add_balance(&env, &recipient, 1);
+        Self::add_owned_token(&env, &recipient, token_id);
         bump_persistent(&env, &DataKey::TokenOwner(token_id));
 
         env.storage()
@@ -246,6 +250,14 @@ impl LyricsFlipNFT {
             .persistent()
             .get(&DataKey::Balance(owner))
             .unwrap_or(0)
+    }
+
+    /// Token ids currently owned by `owner`, in acquisition order.
+    pub fn tokens_of_owner(env: Env, owner: Address) -> Vec<u128> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OwnedTokens(owner))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     pub fn transfer(env: Env, from: Address, to: Address, token_id: u128) {
@@ -481,12 +493,31 @@ impl LyricsFlipNFT {
             .set(&DataKey::TokenOwner(token_id), to);
         Self::add_balance(env, from, -1);
         Self::add_balance(env, to, 1);
+        Self::remove_owned_token(env, from, token_id);
+        Self::add_owned_token(env, to, token_id);
         Transfer {
             from: from.clone(),
             to: to.clone(),
             token_id,
         }
         .publish(env);
+    }
+
+    fn add_owned_token(env: &Env, owner: &Address, token_id: u128) {
+        let key = DataKey::OwnedTokens(owner.clone());
+        let mut tokens = Self::tokens_of_owner(env.clone(), owner.clone());
+        tokens.push_back(token_id);
+        env.storage().persistent().set(&key, &tokens);
+        bump_persistent(env, &key);
+    }
+
+    fn remove_owned_token(env: &Env, owner: &Address, token_id: u128) {
+        let key = DataKey::OwnedTokens(owner.clone());
+        let mut tokens = Self::tokens_of_owner(env.clone(), owner.clone());
+        if let Some(i) = tokens.first_index_of(token_id) {
+            tokens.remove(i);
+        }
+        env.storage().persistent().set(&key, &tokens);
     }
 
     fn add_balance(env: &Env, owner: &Address, delta: i32) {

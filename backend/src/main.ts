@@ -18,6 +18,13 @@ async function bootstrap() {
   });
   app.useGlobalGuards(new CustomThrottlerGuard());
 
+  // The refresh token is an HttpOnly cookie, so the frontend origin must be
+  // allowed to send credentials.
+  app.enableCors({
+    origin: process.env.FRONTEND_URL ?? 'http://localhost:3001',
+    credentials: true,
+  });
+
   app.useWebSocketAdapter(new SocketIOAdapter(app));
 
   // const config = new DocumentBuilder()

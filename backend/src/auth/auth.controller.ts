@@ -3,14 +3,24 @@ import {
   Body,
   ClassSerializerInterceptor,
   Controller,
+  HttpCode,
   Post,
+  Req,
+  Res,
+  UnauthorizedException,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './providers/auth.service';
 import { SignInDto } from './dtos/signIn.dto';
 import { UserDTO } from './../user/dtos/create-user.dto';
-import { RefreshTokenDto } from './dtos/refresh-token.dto';
+import {
+  assertCsrfHeader,
+  clearRefreshCookie,
+  readRefreshCookie,
+  setRefreshCookie,
+} from './refresh-cookie';
 import { ForgotPasswordDto } from './dtos/forgot-password.dto';
 import { ResetPasswordDto } from './dtos/reset-password.dto';
 
@@ -43,8 +53,11 @@ export class AuthController {
       },
     },
   })
-  public async signIn(@Body() signInDto: SignInDto) {
-    return this.authService.signIn(signInDto);
+  public async signIn(@Body() signInDto: SignInDto, @Res({ passthrough: true }) res: Response) {
+    // The refresh token only ever travels in an HttpOnly cookie.
+    const { refreshToken, ...rest } = await this.authService.signIn(signInDto);
+    setRefreshCookie(res, refreshToken);
+    return rest;
   }
 
   @Post('sign-up')
@@ -77,9 +90,22 @@ export class AuthController {
   @ApiOperation({ summary: 'Refresh access token' })
   @ApiResponse({ status: 200, description: 'Token refreshed successfully.' })
   @ApiResponse({ status: 401, description: 'Invalid refresh token.' })
-  @ApiBody({ type: RefreshTokenDto })
-  public async refreshToken(@Body() refreshTokenDto: RefreshTokenDto) {
-    return this.authService.refreshToken(refreshTokenDto);
+  @HttpCode(200)
+  public async refreshToken(@Req() req: Request) {
+    assertCsrfHeader(req);
+    const refreshToken = readRefreshCookie(req);
+    if (!refreshToken) {
+      throw new UnauthorizedException('Missing refresh token');
+    }
+    return this.authService.refreshToken({ refreshToken });
+  }
+
+  @Post('sign-out')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Clear the refresh token cookie' })
+  public signOut(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    assertCsrfHeader(req);
+    clearRefreshCookie(res);
   }
 
   @Post('forgot-password')

@@ -1,61 +1,18 @@
-//! Representative behavior-coverage tests ported from
-//! `onchain/src/tests/test_lyricsflip.cairo` (round lifecycle, card queries,
-//! answer submission, and access control). These are written against the
-//! soroban-sdk 22 testutils API but have not been `cargo test`-verified in
-//! this environment (no Rust toolchain available) — run `cargo test` inside
-//! `onchain/` before relying on them.
+//! Unit and behavior tests for the `lyricsflip` contract: round lifecycle,
+//! card queries, answer submission, access control, events, TTLs, budgets.
+//!
+//! Run with `cargo test` inside `onchain/`.
 
 extern crate std;
 
-use crate::{
-    Answer, AnswerSubmitted, Card, CardAdded, CardDrawn, CardRemoved, CardUpdated,
-    CardsPerRoundUpdated, Error, Genre, LyricsFlip, LyricsFlipClient, Role, RoleUpdated,
-    RoundCompleted, MAX_CARDS_PER_BATCH, MAX_LYRICS_LEN, MAX_PAGE_LIMIT, MAX_ROUND_PLAYERS,
-};
+use crate::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
-    Address, Env, Event, Map, String, Vec,
+    testutils::{Address as _, ContractEvents, Events, Ledger},
+    xdr, Address, Env, Event, Map, String, Vec,
 };
 
 /// 2026-05-28, so cards up to year 2026 pass validation.
 const NOW: u64 = 1_780_000_000;
-use crate::{
-    Answer, Card, Error, Genre, LyricsFlip, LyricsFlipClient, Milestone, Role, RoleUpdated,
-    RoundCancelled, RoundCompleted, RoundLeft, CARD_ANSWER_WINDOW_SECONDS, DEFAULT_MAX_PLAYERS,
-    LOBBY_TIMEOUT_SECONDS, MAX_PAGE_LIMIT,
-};
-use soroban_sdk::{
-    events::Event as _,
-    testutils::{Address as _, ContractEvents, Events, Ledger},
-    Address, Env, Map, String,
-};
-//! Unit tests for the `lyricsflip` contract.
-//!
-//! Coverage targets:
-//! - Every public function (happy path + key error paths).
-//! - Every `Error` variant.
-//! - `build_question_card` with all three `QuestionKind` values (LF-029).
-//!
-//! Run with `cargo test` inside `onchain/`.
-
-use crate::{Answer, Card, Error, Genre, LyricsFlip, LyricsFlipClient, QuestionKind, Role, MAX_PAGE_LIMIT};
-use soroban_sdk::{
-    testutils::{Address as _, Events},
-    xdr, Address, Env, Map, String, Vec,
-};
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-//! Representative behavior-coverage tests for the LyricsFlip game contract.
-//! Covers round lifecycle, card queries, answer submission, access control,
-//! LF-011 (O(limit) random selection), and LF-012 (TTL survival).
-
-use crate::{Answer, Card, Error, Genre, LyricsFlip, LyricsFlipClient, Role, MAX_PAGE_LIMIT};
-use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger as _},
-    xdr, Address, Env, Map, String,
-};
 
 fn setup<'a>() -> (Env, LyricsFlipClient<'a>, Address) {
     let env = Env::default();
@@ -186,24 +143,6 @@ fn get_card_errors_for_nonexistent_id() {
     assert!(result.is_err());
 }
 
-#[test]
-fn card_counts_track_adds() {
-    let (env, client, owner) = setup();
-    assert_eq!(client.get_cards_count(), 0);
-    assert_eq!(client.get_genre_card_count(&Genre::Pop), 0);
-
-    seed_cards(&env, &client, &owner, 3);
-    client.add_card(
-        &owner,
-        &sample_card(&env, Genre::Rock, "Artist B", "Title B", 1990),
-    );
-
-    assert_eq!(client.get_cards_count(), 4);
-    assert_eq!(client.get_genre_card_count(&Genre::Pop), 3);
-    assert_eq!(client.get_genre_card_count(&Genre::Rock), 1);
-    assert_eq!(client.get_genre_card_count(&Genre::Jazz), 0);
-}
-
 // ---------------------------------------------------------------------------
 // set_cards_per_round
 // ---------------------------------------------------------------------------
@@ -235,11 +174,24 @@ fn create_round_requires_a_genre() {
     assert!(result.is_err());
 }
 
-fn seed_cards(env: &Env, client: &LyricsFlipClient, owner: &Address, count: u64) {
-    for i in 0..count {
-        let title = std::format!("Title A{}", i);
-        let card = sample_card(env, Genre::Pop, "Artist A", &title, 2000 + i);
-        client.add_card(owner, &card);
+#[test]
+fn card_counts_track_adds() {
+    let (env, client, owner) = setup();
+    assert_eq!(client.get_cards_count(), 0);
+    assert_eq!(client.get_genre_card_count(&Genre::Pop), 0);
+
+    seed_cards(&env, &client, &owner, 3);
+    client.add_card(
+        &owner,
+        &sample_card(&env, Genre::Rock, "Artist B", "Title B", 1990),
+    );
+
+    assert_eq!(client.get_cards_count(), 4);
+    assert_eq!(client.get_genre_card_count(&Genre::Pop), 3);
+    assert_eq!(client.get_genre_card_count(&Genre::Rock), 1);
+    assert_eq!(client.get_genre_card_count(&Genre::Jazz), 0);
+}
+
 #[test]
 fn round_count_tracks_creates() {
     let (env, client, owner) = setup();
@@ -409,7 +361,12 @@ fn next_card_advances_index_and_completes_round() {
     let _c2 = client.next_card(&round_id);
     let round = client.get_round(&round_id);
     assert_eq!(round.next_card_index, 2);
-    assert!(round.is_completed);
+    // Completion is set by `finalize_round`; there are no cards left to draw.
+    assert!(!round.is_completed);
+    assert_eq!(
+        client.try_next_card(&round_id),
+        Err(Ok(Error::RoundCompleted.into()))
+    );
 }
 
 #[test]
@@ -472,11 +429,7 @@ fn seed_diverse_cards(env: &Env, client: &LyricsFlipClient, owner: &Address) {
 
 /// Assert that the four options are all distinct strings and that one of them
 /// matches `correct`.
-fn assert_four_unique_options_with_correct(
-    env: &Env,
-    q: &crate::QuestionCard,
-    correct: &String,
-) {
+fn assert_four_unique_options_with_correct(env: &Env, q: &crate::QuestionCard, correct: &String) {
     let opts = [
         q.option_one.clone(),
         q.option_two.clone(),
@@ -570,10 +523,19 @@ fn build_question_card_year_distractors_are_close_to_correct_year() {
     ];
     for opt in options.iter() {
         // Parse the year string.
-        let bytes = opt.to_string();
-        let parsed: i64 = bytes.parse().expect("year option should be a number");
+        let mut buf = [0u8; 16];
+        let len = opt.len() as usize;
+        opt.copy_into_slice(&mut buf[..len]);
+        let parsed: i64 = core::str::from_utf8(&buf[..len])
+            .unwrap()
+            .parse()
+            .expect("year option should be a number");
         let diff = (parsed - card.year as i64).abs();
-        assert!(diff <= 5, "distractor year {parsed} is more than 5 away from {}", card.year);
+        assert!(
+            diff <= 5,
+            "distractor year {parsed} is more than 5 away from {}",
+            card.year
+        );
     }
 }
 
@@ -718,7 +680,7 @@ fn get_cards_of_artist_returns_requested_amount() {
                 card_id: 0,
                 genre: Genre::Rock,
                 artist: String::from_str(&env, "The Same Artist"),
-                title: String::from_str(&env, &format!("Song {}", i)),
+                title: String::from_str(&env, &std::format!("Song {}", i)),
                 year: 2000 + i,
                 lyrics: String::from_str(&env, "lyric"),
             },
@@ -744,8 +706,8 @@ fn get_cards_of_year_returns_requested_amount() {
             &Card {
                 card_id: 0,
                 genre: Genre::Jazz,
-                artist: String::from_str(&env, &format!("Artist {}", i)),
-                title: String::from_str(&env, &format!("Track {}", i)),
+                artist: String::from_str(&env, &std::format!("Artist {}", i)),
+                title: String::from_str(&env, &std::format!("Track {}", i)),
                 year: 1990,
                 lyrics: String::from_str(&env, "lyric"),
             },
@@ -795,14 +757,6 @@ fn assert_round_completed_event(
     winners: &soroban_sdk::Vec<Address>,
     scores: &Map<Address, u64>,
 ) {
-    assert_emitted(
-        env,
-        contract_id,
-        RoundCompleted {
-            round_id,
-            winners: winners.clone(),
-            scores: scores.clone(),
-        },
     let expected = RoundCompleted {
         round_id,
         winners: winners.clone(),
@@ -1047,27 +1001,7 @@ fn finalize_round_e2e_no_correct_answers_has_no_winners() {
     assert_eq!(scores.get(player2.clone()).unwrap(), 0u64);
 
     let winners = soroban_sdk::vec![&env];
-    assert_round_completed_event(&env, &client.address, round_id, &winners, &scores);
     assert_round_completed_event(&env, &events, &client.address, round_id, &winners, &scores);
-}
-
-#[test]
-fn card_counts_track_adds() {
-    let (env, client, owner) = setup();
-    assert_eq!(client.get_cards_count(), 0);
-    assert_eq!(client.get_genre_card_count(&Genre::Pop), 0);
-
-    seed_cards(&env, &client, &owner, 3);
-    client.add_card(
-        &owner,
-        &sample_card(&env, Genre::Rock, "Artist B", "Title B", 1990),
-    );
-
-    assert_eq!(client.get_cards_count(), 4);
-    assert_eq!(client.get_genre_card_count(&Genre::Pop), 3);
-    assert_eq!(client.get_genre_card_count(&Genre::Rock), 1);
-    assert_eq!(client.get_genre_card_count(&Genre::Jazz), 0);
-    assert_round_completed_event(&env, &client.address, round_id, &winners, &scores);
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,12 +1116,12 @@ fn error_codes_are_stable() {
         (Error::RoundNotReady, 18),
         (Error::RoundAlreadyFinalized, 19),
         (Error::RoundCancelled, 20),
-        (Error::RoundFull, 21),
         (Error::InvalidMaxPlayers, 22),
         (Error::NftContractNotSet, 23),
         (Error::MilestoneNotReached, 24),
         (Error::MilestoneAlreadyClaimed, 25),
-        (Error::NotPendingOwner, 26),
+        (Error::NotPendingOwner, 33),
+        (Error::MaxPlayersTooHigh, 45),
     ];
     for (variant, code) in expected {
         assert_eq!(variant as u32, code, "{:?} was renumbered", variant);
@@ -1677,6 +1611,8 @@ fn admin_and_gameplay_mutations_emit_events() {
             correct: true,
         },
     );
+}
+
 #[test]
 fn leave_round_refunds_wager_and_frees_the_seat() {
     let (env, client, owner) = setup();
@@ -1870,11 +1806,13 @@ fn winner_claims_nft_reward_via_cross_contract_mint() {
         Err(Ok(Error::MilestoneAlreadyClaimed.into()))
     );
     assert_eq!(nft.token_count(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // LF-011 – partial Fisher-Yates is O(limit), not O(coupon-collector)
 // ---------------------------------------------------------------------------
 
-/// Confirms that `get_random_numbers(amount=50, limit=50)` — the worst-case
+/// Confirms that `get_random_numbers(amount == limit)` — the worst-case
 /// scenario that caused the coupon-collector blowup — now runs in a fixed
 /// number of iterations. We check this indirectly: seed the contract with 50
 /// cards, call `get_cards_of_genre` (which internally calls
@@ -1884,11 +1822,10 @@ fn winner_claims_nft_reward_via_cross_contract_mint() {
 fn get_random_numbers_worst_case_amount_equals_limit() {
     let (env, client, owner) = setup();
 
-    // Add 50 distinct cards (all Pop genre).
-    for i in 0..50u64 {
-        let title = soroban_sdk::String::from_str(&env, "T");
-        // Unique titles via seeded shuffle are not required here; we only care
-        // that the function returns 50 results without panicking.
+    // Worst case under the `MAX_CARDS_PER_ROUND` cap: amount == limit.
+    let n = MAX_CARDS_PER_ROUND as u64;
+    for i in 0..n {
+        let title = String::from_str(&env, &std::format!("T{}", i));
         let card = Card {
             card_id: 0,
             genre: Genre::Pop,
@@ -1899,15 +1836,11 @@ fn get_random_numbers_worst_case_amount_equals_limit() {
         };
         client.add_card(&owner, &card);
     }
-    client.set_cards_per_round(&owner, &50);
+    client.set_cards_per_round(&owner, &MAX_CARDS_PER_ROUND);
 
     // This must complete without panicking (no infinite loop).
     let cards = client.get_cards_of_genre(&Genre::Pop, &12345u64);
-    assert_eq!(
-        cards.len(),
-        50,
-        "expected exactly 50 cards back when amount == limit == 50"
-    );
+    assert_eq!(cards.len(), MAX_CARDS_PER_ROUND);
 }
 
 /// Verifies that `get_random_numbers` returns the requested `amount` without
@@ -1918,7 +1851,13 @@ fn get_random_numbers_returns_correct_count_for_various_inputs() {
     for i in 0..20u64 {
         client.add_card(
             &owner,
-            &sample_card(&env, Genre::Jazz, "Artist", "Title", 1970 + i),
+            &sample_card(
+                &env,
+                Genre::Jazz,
+                "Artist",
+                &std::format!("Title {}", i),
+                1970 + i,
+            ),
         );
     }
 
@@ -2004,7 +1943,7 @@ fn set_role_emits_role_updated() {
     let other = Address::generate(&env);
     client.set_role(&owner, &other, &Role::Admin, &true);
     let expected = RoleUpdated {
-        address: other,
+        account: other,
         role: Role::Admin,
         enabled: true,
     }
@@ -2075,4 +2014,62 @@ fn upgrade_keeps_state_and_changes_version() {
             .get::<_, bool>(&crate::DataKey::Admin(other.clone()))
             .unwrap());
     });
+}
+
+#[test]
+fn set_max_players_rejects_above_cap() {
+    let (_env, client, owner) = setup();
+    client.set_max_players(&owner, &MAX_ROUND_PLAYERS);
+    assert_eq!(
+        client.try_set_max_players(&owner, &(MAX_ROUND_PLAYERS + 1)),
+        Err(Ok(Error::MaxPlayersTooHigh.into()))
+    );
+}
+
+#[test]
+fn set_cards_per_round_rejects_above_cap() {
+    let (_env, client, owner) = setup();
+    client.set_cards_per_round(&owner, &MAX_CARDS_PER_ROUND);
+    assert_eq!(
+        client.try_set_cards_per_round(&owner, &(MAX_CARDS_PER_ROUND + 1)),
+        Err(Ok(Error::InvalidCardsPerRound.into()))
+    );
+}
+
+/// Worst case: `MAX_ROUND_PLAYERS` players each answer all
+/// `MAX_CARDS_PER_ROUND` cards; `start_round` and `finalize_round` must still
+/// fit the default budget so wagers can never be locked.
+#[test]
+fn finalize_round_worst_case_fits_budget() {
+    let (env, client, owner) = setup();
+    seed_cards(&env, &client, &owner, MAX_CARDS_PER_ROUND as u64);
+    client.set_cards_per_round(&owner, &MAX_CARDS_PER_ROUND);
+    client.set_max_players(&owner, &MAX_ROUND_PLAYERS);
+
+    let round_id = client.create_round(&owner, &Some(Genre::Pop), &7u64);
+    let mut players = Vec::new(&env);
+    players.push_back(owner.clone());
+    for _ in 1..MAX_ROUND_PLAYERS {
+        let p = Address::generate(&env);
+        client.join_round(&p, &round_id);
+        players.push_back(p);
+    }
+    for p in players.iter() {
+        env.cost_estimate().budget().reset_default();
+        client.start_round(&p, &round_id);
+    }
+
+    env.ledger().set_timestamp(10);
+    for _ in 0..MAX_CARDS_PER_ROUND {
+        let card = client.next_card(&round_id);
+        for p in players.iter() {
+            client.submit_answer(&p, &round_id, &Answer::Title(card.title.clone()));
+        }
+    }
+
+    env.cost_estimate().budget().reset_default();
+    client.finalize_round(&owner, &round_id);
+    let res = env.cost_estimate().resources();
+    std::println!("finalize_round worst case resources: {:?}", res);
+    assert!(client.get_round(&round_id).is_completed);
 }

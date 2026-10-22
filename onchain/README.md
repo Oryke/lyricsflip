@@ -92,6 +92,7 @@ library's.
 | --- | --- |
 | `mint(caller, recipient) -> u128` | Minter-only; mints the next token id |
 | `owner_of(token_id) -> Address` | Owner of a token |
+| `tokens_of_owner(owner) -> Vec<u128>` | Token ids held by `owner` (one call for badge galleries) |
 | `balance(owner) -> u32` | Number of tokens held by `owner` |
 | `transfer(from, to, token_id)` | Owner transfers a token (auth: `from`) |
 | `transfer_from(spender, from, to, token_id)` | Approved spender or operator transfers (auth: `spender`) |
@@ -121,7 +122,7 @@ Both contracts support a two-step ownership transfer: the owner calls
 events; `owner()` and `pending_owner()` views). On `lyricsflip`, the new owner
 is also granted the admin role, and `set_role` is owner-only regardless of the
 owner's own admin flag, so the owner cannot lock themselves out. `set_role`
-emits `RoleUpdated { address, role, enabled }`.
+emits `RoleUpdated { account, role, enabled }`.
 
 Both contracts expose `version() -> u32` and an owner-only
 `upgrade(caller, new_wasm_hash)` that replaces the code in place and keeps all
@@ -322,6 +323,7 @@ following hot keys:
 | `OpenRounds` | `create_round` / `start_round` write |
 | `PlayerStats` | `start_round` / `submit_answer` / `finalize_round` write, `get_player_stat` read |
 | `TokenOwner(id)` *(NFT)* | `mint` write, `owner_of` read |
+| `OwnedTokens(addr)` *(NFT)* | `mint`/transfer write, `tokens_of_owner` read |
 
 ### Survival tests
 
@@ -350,7 +352,7 @@ Every variant is currently referenced by the contract. The ones marked
 | 3 | `RoundAlreadyStarted` | Tried to join a round that has already started |
 | 4 | `NonExistingGenre` | `create_round` was called without a genre |
 | 5 | `RoundAlreadyJoined` | Caller is already a player in the round |
-| 6 | `InvalidCardsPerRound` | `set_cards_per_round` was called with 0 |
+| 6 | `InvalidCardsPerRound` | `set_cards_per_round` was called with 0 or more than `MAX_CARDS_PER_ROUND` (20) |
 | 7 | `ArtistCardsIsZero` | No cards exist for the requested artist |
 | 8 | `EmptyYearCards` | No cards exist for the requested year |
 | 9 | `EmptyGenreCards` | No cards exist for the requested genre |
@@ -362,7 +364,6 @@ Every variant is currently referenced by the contract. The ones marked
 | 15 | `AmountExceedsLimit` | Asked for more random cards than exist (e.g. cards-per-round larger than the catalogue) |
 | 16 | `LimitMustBeGreaterThanZero` | Random selection over an empty set (no cards added yet) |
 | 17 | `NonExistingCard` | No card with the given id |
-| 21 | `RoundFull` | Round already has `MAX_ROUND_PLAYERS` players |
 | 26 | `InvalidCardTitle` | Card `title` is empty |
 | 27 | `InvalidCardArtist` | Card `artist` is empty |
 | 28 | `InvalidCardLyrics` | Card `lyrics` is empty |
@@ -378,7 +379,8 @@ Every variant is currently referenced by the contract. The ones marked
 | 23 | `NftContractNotSet` | `claim_reward` before the owner set the NFT contract |
 | 24 | `MilestoneNotReached` | Player's stats don't meet the milestone yet |
 | 25 | `MilestoneAlreadyClaimed` | Player already claimed that milestone |
-| 26 | `NotPendingOwner` | Caller of `accept_ownership` is not the pending owner |
+| 33 | `NotPendingOwner` | Caller of `accept_ownership` is not the pending owner |
+| 45 | `MaxPlayersTooHigh` | `set_max_players` value is above `MAX_ROUND_PLAYERS` (8) |
 | 18 | `RoundNotReady` | `finalize_round` called before all answers submitted and before the deadline |
 | 19 | `RoundAlreadyFinalized` | `finalize_round` called a second time on an already-finalized round |
 

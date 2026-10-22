@@ -26,6 +26,11 @@ import {
   questionKindToWire,
 } from './types';
 
+export interface OwnedNft {
+  tokenId: bigint;
+  uri: string;
+}
+
 export interface SystemCalls {
   createRound: (genre: Genre, seed?: bigint) => Promise<bigint>;
   joinRound: (roundId: bigint) => Promise<void>;
@@ -53,6 +58,8 @@ export interface SystemCalls {
   claimReward: (milestone: Milestone) => Promise<bigint>;
   buildQuestionCard: (card: Card, kind: QuestionKind, seed?: bigint) => Promise<QuestionCard>;
   mintNft: (recipient: string) => Promise<bigint>;
+  /** Badges held by `owner`: one `tokens_of_owner` + one `base_uri` call. */
+  getOwnedNfts: (owner: string) => Promise<OwnedNft[]>;
   /**
    * `getCategories`, `getSongs`, `getLeaderboard`, and `claimEarnings` were
    * already referenced by some UI components on the Starknet/Dojo version of
@@ -119,7 +126,18 @@ type LyricsFlipContract = {
 
 type LyricsFlipNftContract = {
   mint: (args: { caller: string; recipient: string }) => Promise<contract.AssembledTransaction<bigint>>;
+  tokens_of_owner: (args: { owner: string }) => Promise<contract.AssembledTransaction<bigint[]>>;
+  base_uri: () => Promise<contract.AssembledTransaction<string>>;
 };
+
+async function getNftClient(config: StellarConfig, publicKey: string | null) {
+  return contract.Client.from<LyricsFlipNftContract>({
+    contractId: config.lyricsflipNftContractId,
+    networkPassphrase: config.networkPassphrase,
+    rpcUrl: config.rpcUrl,
+    publicKey: publicKey ?? undefined,
+  });
+}
 
 async function getGameClient(config: StellarConfig, publicKey: string | null) {
   return contract.Client.from<LyricsFlipContract>({
@@ -277,6 +295,15 @@ export function createSystemCalls(config: StellarConfig, publicKey: string | nul
       const caller = requireAccount();
       const client = await getGameClient(config, caller);
       return submit(await client.claim_reward({ caller, milestone }));
+    },
+
+    getOwnedNfts: async (owner) => {
+      const client = await getNftClient(config, publicKey);
+      const [tokens, baseUri] = await Promise.all([
+        client.tokens_of_owner({ owner }),
+        client.base_uri(),
+      ]);
+      return tokens.result.map((tokenId) => ({ tokenId, uri: `${baseUri.result}${tokenId}` }));
     },
 
     getCategories: notImplemented('getCategories'),

@@ -39,10 +39,11 @@ pub enum Error {
     DuplicateCard = 31,
     BatchTooLarge = 32,
     RoundCancelled = 20,
-    RoundFull = 21,
     InvalidMaxPlayers = 22,
     NftContractNotSet = 23,
     MilestoneNotReached = 24,
     MilestoneAlreadyClaimed = 25,
-    NotPendingOwner = 26,
+    NotPendingOwner = 33,
+    /// `set_max_players` got a value above `MAX_ROUND_PLAYERS`.
+    MaxPlayersTooHigh = 45,
 }

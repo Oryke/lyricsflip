@@ -35,12 +35,12 @@ export const LYRICSFLIP_ERRORS: Record<number, ContractErrorInfo> = {
   31: { name: 'DuplicateCard', message: 'A card with that title and artist already exists.' },
   32: { name: 'BatchTooLarge', message: 'Too many cards in one batch (max 20).' },
   20: { name: 'RoundCancelled', message: 'That round was cancelled.' },
-  21: { name: 'RoundFull', message: 'That round is full.' },
   22: { name: 'InvalidMaxPlayers', message: 'A round needs room for at least 2 players.' },
   23: { name: 'NftContractNotSet', message: 'NFT rewards are not configured yet.' },
   24: { name: 'MilestoneNotReached', message: 'You have not reached that milestone yet.' },
   25: { name: 'MilestoneAlreadyClaimed', message: 'You already claimed that reward.' },
-  26: { name: 'NotPendingOwner', message: 'You are not the pending owner of this contract.' },
+  33: { name: 'NotPendingOwner', message: 'You are not the pending owner of this contract.' },
+  45: { name: 'MaxPlayersTooHigh', message: 'A round can have at most 8 players.' },
 };
 
 export const LYRICSFLIP_NFT_ERRORS: Record<number, ContractErrorInfo> = {

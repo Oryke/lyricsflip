@@ -5,8 +5,13 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ArrowLeft, CircleCheck, CircleX } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useStellar } from '@/lib/stellar/hooks/useStellar';
+import { markUsernameSet } from '@/lib/auth/session';
 
 export default function SetUsername() {
+  const router = useRouter();
+  const { account } = useStellar();
   const [username, setUsername] = useState('');
   const [status, setStatus] = useState<
     'idle' | 'available' | 'taken' | 'invalid'
@@ -41,7 +46,7 @@ export default function SetUsername() {
       <div className="w-full col-span-1 p-6 md:p-12 flex flex-col flex-1">
         <div className="mb-8 absolute">
           <Link
-            href="/sign-up"
+            href="/sign-in"
             className="flex gap-x-1 items-center text-gray-700 hover:text-gray-900"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -105,6 +110,11 @@ export default function SetUsername() {
             <div className="mt-auto mx-auto w-full">
               <button
                 disabled={status !== 'available'}
+                onClick={() => {
+                  if (account) markUsernameSet(account.address);
+                  const next = new URLSearchParams(window.location.search).get('next');
+                  router.replace(next || '/');
+                }}
                 className={`w-full py-4 px-4 rounded-full transition-colors ${
                   status === 'available'
                     ? 'bg-purplePrimary5 hover:bg-purplePrimary5/90 text-white'

@@ -6,6 +6,7 @@ import { UserDTO } from './../../user/dtos/create-user.dto';
 import { JwtService } from '@nestjs/jwt';
 import { RefreshTokenDto } from '../dtos/refresh-token.dto';
 import { PasswordResetProvider } from './password-reset.provider';
+import { SignInProvider } from './sign-in.provider';
 
 @Injectable()
 export class AuthService {
@@ -14,6 +15,7 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService, // Inject JWT service
     private readonly passwordResetProvider: PasswordResetProvider,
+    private readonly signInProvider: SignInProvider,
   ) {}
 
   /**
@@ -24,10 +26,7 @@ export class AuthService {
    * @returns Confirmation message upon successful authentication.
    */
   public signIn(signInDto: SignInDto) {
-    //Find the user using email
-    //If the user is not found throw an error
-    //Compare the password
-    // Confirmation Message
+    return this.signInProvider.SignIn(signInDto);
   }
 
   // Forgot Password
